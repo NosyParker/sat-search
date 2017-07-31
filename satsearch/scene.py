@@ -24,6 +24,7 @@ class Scene(object):
         required = ['scene_id', 'date', 'data_geometry', 'download_links']
         if not set(required).issubset(kwargs.keys()):
             raise SatSceneError('Invalid Scene (required parameters: %s' % ' '.join(required))
+        self.filenames = {}
         # TODO - check validity of date and geometry, at least one download link
 
     def __repr__(self):
@@ -54,12 +55,25 @@ class Scene(object):
         files = self.metadata['download_links'][source]
         prefix = os.path.commonprefix(files)
         keys = [os.path.splitext(f[len(prefix):])[0] for f in files]
-        return dict(zip(keys, files))
+        links = dict(zip(keys, files))
+        if source == 'aws_s3' and 'aws_thumbnail' in self.metadata:
+            links['thumb'] = self.metadata['aws_thumbnail']
+        else:
+            links['thumb'] = self.metadata['thumbnail']
+        return links
 
-    def download_thumbnail(self, path=None, nosubdirs=None):
-        """ Download thumbnail(s) for this scene """
-        url = self.metadata['thumbnail'] if 'aws_thumbnail' not in self.metadata else self.metadata['aws_thumbnail']
-        return self.download_file(url, path=path, nosubdirs=nosubdirs)
+    def geojson(self):
+        """ Return metadata as GeoJSON """
+        return {
+            'type': 'Feature',
+            'geometry': self.metadata['data_geometry'],
+            'properties': self.metadata
+        }
+
+    def get_older_landsat_collection_links(self, link):
+        """ From a link string, generate links for previous versions """
+        sid = os.path.basename(link).split('_')[0]
+        return [link.replace(sid, sid[0:-1] + str(s)) for s in reversed(range(0, int(sid[-1]) + 1))]
 
     def download(self, key=None, source=_DEFAULT_SOURCE, path=None, nosubdirs=None):
         """ Download this key (e.g., a band, or metadata file) from the scene """
@@ -70,11 +84,24 @@ class Scene(object):
         else:
             keys = [key]
         # loop through keys and get files
-        filenames = {}
         for k in keys:
             if k in links:
-                filenames[k] = self.download_file(links[k], path=path, nosubdirs=nosubdirs)
-        return filenames
+                # work around because aws landsat not up to collection 1
+                # so try to download older collection data if data not available
+                if self.platform == 'landsat-8' and source == 'aws_s3':
+                    link = self.get_older_landsat_collection_links(links[k])
+                else:
+                    link = [links[k]]
+                for l in link:
+                    try:
+                        self.filenames[k] = self.download_file(l, path=path, nosubdirs=nosubdirs)
+                        break
+                    except Exception:
+                        logger.error('Unable to download %s' % l)
+                if k in self.filenames:
+                    #self.metadata['download_links'][source][k] = l
+                    logger.info('Downloaded %s as %s' % (l, self.filenames[k]))
+        return self.filenames
 
     def download_file(self, url, path=None, nosubdirs=None):
         """ Download a file """
@@ -153,11 +180,22 @@ class Scenes(object):
         for m in cals:
             print(cals[m])
 
-    def save(self, filename):
+    def save(self, filename, geojson=False):
         """ Save scene metadata """
-        scenes = [s.metadata for s in self.scenes]
+        if geojson:
+            md = self.geojson()
+        else:
+            md = {'scenes': [s.metadata for s in self.scenes]}
         with open(filename, 'w') as f:
-            f.write(json.dumps({'scenes': scenes}))
+            f.write(json.dumps(md))
+
+    def geojson(self):
+        """ Get all metadata as GeoJSON """
+        features = [s.geojson() for s in self.scenes]
+        return {
+            'type': 'FeatureCollection',
+            'features': features
+        }
 
     @classmethod
     def load(cls, filename):
@@ -166,9 +204,6 @@ class Scenes(object):
             metadata = json.loads(f.read())['scenes']
         scenes = [Scene(**md) for md in metadata]
         return Scenes(scenes)
-
-    def download_thumbnails(self, **kwargs):
-        return [s.download_thumbnail(**kwargs) for s in self.scenes]
 
     def download(self, **kwargs):
         return [s.download(**kwargs) for s in self.scenes]

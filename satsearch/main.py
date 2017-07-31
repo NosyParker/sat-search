@@ -7,6 +7,8 @@ from .version import __version__
 from satsearch import Search, Scenes
 import satsearch.config as config
 
+
+logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 
@@ -46,7 +48,8 @@ def parse_args(args):
     group = parser.add_argument_group('Output')
     group.add_argument('--printsum', help='Print basic metadata for matched scenes', default=False, action='store_true')
     group.add_argument('--printcal', help='Print calendar showing dates', default=False, action='store_true')
-    group.add_argument('--save', help='Save metadata of all scenes as file', default=None)
+    group.add_argument('--save', help='Save metadata of all scenes as JSON file', default=None)
+    group.add_argument('--savegeojson', help='Save geometry in metadata as GeoJSON file', default=None)
     group.add_argument('--datadir', help='Local directory to save images', default=config.DATADIR)
     group.add_argument('--nosubdirs', help='When saving, do not create directories usng scene_id',
                        default=False, action='store_true')
@@ -67,7 +70,7 @@ def parse_args(args):
 
 
 def main(datadir=config.DATADIR, nosubdirs=config.NOSUBDIRS, printsum=False, printcal=False,
-         save=None, download=None, source='aws_s3', **kwargs):
+         save=None, savegeojson=None, download=None, source='aws_s3', **kwargs):
     """ Main function for performing a search """
     config.DATADIR = datadir
     config.NOSUBDIRS = nosubdirs
@@ -95,11 +98,11 @@ def main(datadir=config.DATADIR, nosubdirs=config.NOSUBDIRS, printsum=False, pri
     if save is not None:
         scenes.save(filename=save)
 
+    if savegeojson is not None:
+        scenes.save(filename=savegeojson, geojson=True)
+
     # download files given keys
     if download is not None:
-        if 'thumb' in download:
-            scenes.download_thumbnails(path=datadir, nosubdirs=nosubdirs)
-            download.remvoe('thumb')
         for key in download:
             scenes.download(key=key, source=source, path=datadir, nosubdirs=nosubdirs)
 
