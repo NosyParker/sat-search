@@ -58,7 +58,7 @@ class TestScene(unittest.TestCase):
     def test_init(self):
         """ Initialize a scene """
         scene = self.get_test_scene()
-        self.assertEqual(scene.date, self.md['date'])
+        self.assertEqual(str(scene.date), self.md['date'])
         self.assertEqual(scene.scene_id, self.md['scene_id'])
         self.assertEqual(scene.geometry, self.md['data_geometry'])
         self.assertEqual(scene.sources, self.md['download_links'].keys())
@@ -111,7 +111,7 @@ class TestScenes(unittest.TestCase):
         config.DATADIR = testpath
 
     def load_scenes(self):
-        return Scenes.load(os.path.join(testpath, 'scenes.json'))
+        return Scenes.load(os.path.join(testpath, 'scenes.geojson'))
 
     def test_load(self):
         """ Initialize Scenes with list of Scene objects """
@@ -139,10 +139,11 @@ class TestScenes(unittest.TestCase):
         dates = scenes.dates()
         self.assertEqual(len(dates), 10)
 
-    def test_print_calendar(self):
-        """ Print calendar showing dates """
+    def test_text_calendar(self):
+        """ Get calendar """
         scenes = self.load_scenes()
-        scenes.print_calendar()
+        cal = scenes.text_calendar()
+        self.assertTrue(len(cal) > 250)
 
     def test_download_thumbnails(self):
         """ Download all thumbnails """

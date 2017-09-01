@@ -4,6 +4,7 @@ import requests
 import json
 from datetime import datetime
 import calendar
+import satsearch.utils as utils
 import satsearch.config as config
 
 
@@ -40,7 +41,7 @@ class Scene(object):
 
     @property
     def date(self):
-        return self.metadata['date']
+        return datetime.strptime(self.metadata['date'], '%Y-%m-%d').date()
 
     @property
     def geometry(self):
@@ -103,6 +104,13 @@ class Scene(object):
                     logger.info('Downloaded %s as %s' % (l, self.filenames[k]))
         return self.filenames
 
+    @classmethod
+    def mkdirp(cls, path):
+        """ Recursively make directory """
+        if not os.path.isdir(path):
+            os.makedirs(path)
+        return path
+
     def download_file(self, url, path=None, nosubdirs=None):
         """ Download a file """
         if path is None:
@@ -114,8 +122,9 @@ class Scene(object):
         if not nosubdirs:
             path = os.path.join(path, self.platform, self.scene_id)
         # make output path if it does not exist
-        if not os.path.exists(path):
-            os.makedirs(path, exist_ok=True)
+        self.mkdirp(path)
+        #if not os.path.exists(path):
+        #    os.makedirs(path, exist_ok=True)
         # if basename not provided use basename of url
         filename = os.path.join(path, os.path.basename(url))
         # download file
@@ -147,47 +156,34 @@ class Scenes(object):
 
     def dates(self):
         """ Get sorted list of dates for all scenes """
-        return sorted([datetime.strptime(s.date, '%Y-%m-%d') for s in self.scenes])
+        return sorted([s.date for s in self.scenes])
+
+    def sensors(self, date=None):
+        """ List of all available sensors across scenes """
+        if date is None:
+            return list(set([s.platform for s in self.scenes]))
+        else:
+            return list(set([s.platform for s in self.scenes if s.date == date]))
 
     def print_summary(self):
         """ Print summary of all scenes """
         [s.print_summary() for s in self.scenes]
 
-    def print_calendar(self):
-        """ Print a calendar in terminal indicating which days there are scenes for """
-        dates = self.dates()
+    def text_calendar(self):
+        """ Get calendar for dates """
+        date_labels = {}
+        for d in self.dates():
+            sensors = self.sensors(d)
+            if len(sensors) > 1:
+                date_labels[d] = 'Multiple'
+            else:
+                date_labels[d] = sensors[0]
+        return utils.get_text_calendar(date_labels)
 
-        if len(dates) < 1:
-            return
-
-        # create strings for printed calendar
-        total_months = lambda dt: dt.month + 12 * dt.year
-        cals = {}
-        for tot_m in range(total_months(dates[0])-1, total_months(dates[-1])):
-            y, m = divmod(tot_m, 12)
-            cals['%s-%s' % (y, m+1)] = calendar.month(y, m+1)
-
-        # color dates in calendar
-        for d in dates:
-            key = '%s-%s' % (d.year, d.month)
-            if cals[key].find(' %s ' % d.day) != -1:
-                cals[key] = cals[key].replace(' %s ' % d.day, ' \033[1;31m%s\033[0m ' % d.day)
-            elif cals[key].find(' %s\n' % d.day) != -1:
-                cals[key] = cals[key].replace(' %s\n' % d.day, ' \033[1;31m%s\033[0m\n' % d.day)
-            elif cals[key].find('%s ' % d.day) != -1:
-                cals[key] = cals[key].replace('%s ' % d.day, '\033[1;31m%s\033[0m ' % d.day)
-
-        for m in cals:
-            print(cals[m])
-
-    def save(self, filename, geojson=False):
+    def save(self, filename):
         """ Save scene metadata """
-        if geojson:
-            md = self.geojson()
-        else:
-            md = {'scenes': [s.metadata for s in self.scenes]}
         with open(filename, 'w') as f:
-            f.write(json.dumps(md))
+            f.write(json.dumps(self.geojson()))
 
     def geojson(self):
         """ Get all metadata as GeoJSON """
@@ -201,8 +197,8 @@ class Scenes(object):
     def load(cls, filename):
         """ Load a collections class from a file of metadata """
         with open(filename) as f:
-            metadata = json.loads(f.read())['scenes']
-        scenes = [Scene(**md) for md in metadata]
+            metadata = json.loads(f.read())['features']
+        scenes = [Scene(**(md['properties'])) for md in metadata]
         return Scenes(scenes)
 
     def download(self, **kwargs):
