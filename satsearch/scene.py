@@ -1,18 +1,11 @@
 import os
 import logging
 import requests
-import json
 from datetime import datetime
-import calendar
-import satsearch.utils as utils
 import satsearch.config as config
 
 
 logger = logging.getLogger(__name__)
-
-
-class SatSceneError(Exception):
-    pass
 
 
 class Scene(object):
@@ -24,7 +17,7 @@ class Scene(object):
         self.metadata = kwargs
         required = ['scene_id', 'date', 'data_geometry', 'download_links']
         if not set(required).issubset(kwargs.keys()):
-            raise SatSceneError('Invalid Scene (required parameters: %s' % ' '.join(required))
+            raise ValueError('Invalid Scene (required parameters: %s' % ' '.join(required))
         self.filenames = {}
         # TODO - check validity of date and geometry, at least one download link
 
@@ -111,7 +104,7 @@ class Scene(object):
             os.makedirs(path)
         return path
 
-    def download_file(self, url, path=None, nosubdirs=None):
+    def download_file(self, url, path=None, nosubdirs=None, overwrite=False):
         """ Download a file """
         if path is None:
             path = config.DATADIR
@@ -123,10 +116,12 @@ class Scene(object):
             path = os.path.join(path, self.platform, self.scene_id)
         # make output path if it does not exist
         self.mkdirp(path)
-        #if not os.path.exists(path):
-        #    os.makedirs(path, exist_ok=True)
+
         # if basename not provided use basename of url
         filename = os.path.join(path, os.path.basename(url))
+        if os.path.exists(filename) and overwrite is False:
+            return filename
+
         # download file
         logger.info('Downloading %s as %s' % (url, filename))
         resp = requests.get(url, stream=True)
@@ -138,68 +133,34 @@ class Scene(object):
                     f.write(chunk)
         return filename
 
-    def print_summary(self):
-        """ Print summary of metadata """
-        print('%s: %s' % (self.date, self.scene_id))
+    def review_thumbnail(self):
+        """ Display image and give user prompt to keep or discard """
+        fname = self.download('thumb')['thumb']
+        imgcat = os.getenv('IMGCAT', None)
+        if imgcat is None:
+            raise Exception("Set $IMGCAT to a terminal display program")
+        cmd = '%s %s' % (imgcat, fname)
+        os.system(cmd)
+        print("Press Y to keep, N to delete, or any key to quit")
+        while True:
+            char = getch()
+            if char.lower() == 'y':
+                return True
+            elif char.lower() == 'n':
+                return False
+            raise Exception('Cancel')
 
 
-class Scenes(object):
-    """ A collection of Scene objects """
-
-    def __init__(self, scenes):
-        """ Initialize with a list of Scene objects """
-        self.scenes = sorted(scenes, key=lambda s: s.date)
-
-    def __len__(self):
-        """ Number of scenes """
-        return len(self.scenes)
-
-    def dates(self):
-        """ Get sorted list of dates for all scenes """
-        return sorted([s.date for s in self.scenes])
-
-    def sensors(self, date=None):
-        """ List of all available sensors across scenes """
-        if date is None:
-            return list(set([s.platform for s in self.scenes]))
-        else:
-            return list(set([s.platform for s in self.scenes if s.date == date]))
-
-    def print_summary(self):
-        """ Print summary of all scenes """
-        [s.print_summary() for s in self.scenes]
-
-    def text_calendar(self):
-        """ Get calendar for dates """
-        date_labels = {}
-        for d in self.dates():
-            sensors = self.sensors(d)
-            if len(sensors) > 1:
-                date_labels[d] = 'Multiple'
-            else:
-                date_labels[d] = sensors[0]
-        return utils.get_text_calendar(date_labels)
-
-    def save(self, filename):
-        """ Save scene metadata """
-        with open(filename, 'w') as f:
-            f.write(json.dumps(self.geojson()))
-
-    def geojson(self):
-        """ Get all metadata as GeoJSON """
-        features = [s.geojson() for s in self.scenes]
-        return {
-            'type': 'FeatureCollection',
-            'features': features
-        }
-
-    @classmethod
-    def load(cls, filename):
-        """ Load a collections class from a file of metadata """
-        with open(filename) as f:
-            metadata = json.loads(f.read())['features']
-        scenes = [Scene(**(md['properties'])) for md in metadata]
-        return Scenes(scenes)
-
-    def download(self, **kwargs):
-        return [s.download(**kwargs) for s in self.scenes]
+try:
+    from msvcrt import getch
+except ImportError:
+    def getch():
+        import sys, tty, termios
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(sys.stdin.fileno())
+            ch = sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return ch
